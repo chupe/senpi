@@ -713,37 +713,6 @@ export interface InteractiveModeOptions {
 	initialThemeSetting?: string;
 }
 
-/** Extension UI request forwarded from the shared interactive host. */
-type HostUiRequest = {
-	id: string;
-	method: string;
-	title?: string;
-	options?: string[];
-	message?: string;
-	prefill?: string;
-	placeholder?: string;
-	statusKey?: string;
-	statusText?: string;
-	widgetKey?: string;
-	widgetLines?: string[];
-	widgetPlacement?: "aboveEditor" | "belowEditor";
-	extensionName?: string;
-	text?: string;
-};
-
-type HostUiResponse =
-	| { type: "extension_ui_response"; id: string; value: string }
-	| { type: "extension_ui_response"; id: string; confirmed: boolean }
-	| { type: "extension_ui_response"; id: string; cancelled: true };
-
-/**
- * Optional runtime capability: only the shared interactive host proxies extension
- * UI requests back to this mode. The classic local runtime does not implement it.
- */
-type HostUiCapableRuntime = {
-	setHostUiHandler(callback?: (request: HostUiRequest) => Promise<HostUiResponse | undefined>): void;
-};
-
 interface InteractiveTuiOptions {
 	tuiMode: TuiMode;
 	showHardwareCursor: boolean;
@@ -951,12 +920,6 @@ export class InteractiveMode {
 	// Auto-compaction state
 	private autoCompactionEscapeHandler?: () => void;
 	private compactionEscapeOverrideActive = false;
-	/**
-	 * One-time notice guard for the external-owner compaction delegation episode
-	 * (e.g. the Claude Agent SDK owning compaction). Armed while true; re-armed by
-	 * a successful compaction, a model switch, or a session rebind.
-	 */
-	private externalOwnerCompactionNoticeShown = false;
 	private autoCompactionProgressText = "";
 
 	// Auto-retry state
@@ -1035,10 +998,7 @@ export class InteractiveMode {
 			await this.rebindCurrentSession({ renderBeforeBind: true });
 			await this.themeController.applyFromSettings();
 		});
-		// Host-driven extension UI only exists on the shared-host lane; the classic
-		// local runtime renders extension UI in-process and has no such hook.
-		const hostUiRuntime = this.runtimeHost as Partial<HostUiCapableRuntime>;
-		hostUiRuntime.setHostUiHandler?.((request) => this.handleHostUiRequest(request as HostUiRequest));
+		this.runtimeHost.setHostUiHandler((request) => this.handleHostUiRequest(request as any));
 		this.version = DISPLAY_VERSION;
 		this.renderer = createInteractiveTui({
 			tuiMode,
@@ -2638,9 +2598,6 @@ export class InteractiveMode {
 
 	private async rebindCurrentSession(options: { renderBeforeBind?: boolean } = {}): Promise<void> {
 		InteractiveMode.restoreCompactionEscapeOverride(this);
-		// A session switch/reset ends any external-owner delegation episode.
-		this.externalOwnerCompactionNoticeShown = false;
-		this.footer?.setCompactionDelegated?.(false);
 		const session = this.session;
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
@@ -2783,7 +2740,30 @@ export class InteractiveMode {
 		};
 	}
 
-	private async handleHostUiRequest(request: HostUiRequest): Promise<HostUiResponse | undefined> {
+	/**
+	 * Set extension status text in the footer.
+	 */
+	private async handleHostUiRequest(request: {
+		id: string;
+		method: string;
+		title?: string;
+		options?: string[];
+		message?: string;
+		prefill?: string;
+		placeholder?: string;
+		statusKey?: string;
+		statusText?: string;
+		widgetKey?: string;
+		widgetLines?: string[];
+		widgetPlacement?: "aboveEditor" | "belowEditor";
+		extensionName?: string;
+		text?: string;
+	}): Promise<
+		| { type: "extension_ui_response"; id: string; value: string }
+		| { type: "extension_ui_response"; id: string; confirmed: boolean }
+		| { type: "extension_ui_response"; id: string; cancelled: true }
+		| undefined
+	> {
 		switch (request.method) {
 			case "select": {
 				const value = await this.showExtensionSelector(request.title ?? "", request.options ?? []);
@@ -2838,9 +2818,6 @@ export class InteractiveMode {
 		}
 	}
 
-	/**
-	 * Set extension status text in the footer.
-	 */
 	private setExtensionStatus(key: string, text: string | undefined): void {
 		this.footerDataProvider.setExtensionStatus(key, text);
 		this.ui.requestRender();
@@ -4715,28 +4692,7 @@ export class InteractiveMode {
 				InteractiveMode.restoreCompactionEscapeOverride(this);
 				this.clearStatusIndicator("compaction");
 				this.autoCompactionProgressText = "";
-				// Checked before `aborted`: production external-owner rejections are
-				// emitted via `_rejectCompaction(..., true, reason)` and carry
-				// `aborted: true`, so this branch must win for auto reasons or the
-				// delegation state renders as a per-turn red error.
-				if (event.rejectionCause === "external-owner" && event.reason !== "manual") {
-					// Auto compaction is delegated to an external owner (Claude Agent SDK).
-					// This is expected state, not an error: surface it at most once per
-					// delegation episode as a muted informational line and mark the footer
-					// so the saturated context meter reads as "handled natively".
-					if (!this.externalOwnerCompactionNoticeShown) {
-						this.externalOwnerCompactionNoticeShown = true;
-						this.chatContainer.addChild(new Spacer(1));
-						this.chatContainer.addChild(
-							new Text(
-								theme.fg("muted", "The Claude Agent SDK manages and compacts this session's context natively."),
-								1,
-								0,
-							),
-						);
-					}
-					this.footer?.setCompactionDelegated?.(true);
-				} else if (event.aborted) {
+				if (event.aborted) {
 					// Prefer the extension-provided reason over the generic "cancelled"
 					// label so per-turn-cap / circuit-breaker / provider-error cancels are
 					// no longer indistinguishable from a user-triggered abort.
@@ -4793,9 +4749,6 @@ export class InteractiveMode {
 						this.addMessageToChat(summaryMessage);
 					}
 					this.footer.invalidate();
-					// A real compaction landed: the delegation episode (if any) is over.
-					this.externalOwnerCompactionNoticeShown = false;
-					this.footer?.setCompactionDelegated?.(false);
 				} else if (event.errorMessage) {
 					const errorMessage = sanitizeTerminalLabel(event.errorMessage);
 					if (event.reason === "manual") {
@@ -4865,15 +4818,6 @@ export class InteractiveMode {
 				break;
 			}
 
-			case "model_changed":
-				// Shared-host/other-client model switches arrive as model_changed wire
-				// events; the new model must not inherit the previous model's
-				// SDK-delegation episode (post-#1188 core emits no repeat rejection to
-				// self-heal a stale marker).
-				this.externalOwnerCompactionNoticeShown = false;
-				this.footer?.setCompactionDelegated?.(false);
-				break;
-
 			case "retry_fallback_applied": {
 				if (this.pendingZeroDelayRetryIndicator) {
 					this.pendingZeroDelayRetryIndicator.fallbackApplied = true;
@@ -4886,10 +4830,6 @@ export class InteractiveMode {
 					why: `Retry switched models (${event.reason}); the turn continues on ${event.to}.`,
 				});
 				this.setExtensionStatus(FALLBACK_STATUS_KEY, `fallback: ${event.to}`);
-				// Provider/model failover ends any external-owner delegation episode:
-				// the fallback model does not inherit SDK-owned compaction state.
-				this.externalOwnerCompactionNoticeShown = false;
-				this.footer?.setCompactionDelegated?.(false);
 				break;
 			}
 
@@ -5528,11 +5468,6 @@ export class InteractiveMode {
 	}
 
 	renderInitialMessages(): void {
-		// Any full transcript rerender ends the external-owner delegation episode:
-		// the rendered notice is gone, so the guard must re-arm and the footer
-		// marker must not persist as stale state.
-		this.externalOwnerCompactionNoticeShown = false;
-		this.footer?.setCompactionDelegated?.(false);
 		const entries = this.sessionManager.buildContextEntries();
 		this.renderSessionEntries(entries, {
 			updateFooter: true,
@@ -5968,9 +5903,6 @@ export class InteractiveMode {
 				this.showStatus(msg);
 			} else {
 				this.footer.invalidate();
-				// A model switch ends any external-owner delegation episode.
-				this.externalOwnerCompactionNoticeShown = false;
-				this.footer?.setCompactionDelegated?.(false);
 				this.updateEditorBorderColor();
 				const thinkingStr =
 					result.model.reasoning && result.thinkingLevel !== "off" ? ` (thinking: ${result.thinkingLevel})` : "";
@@ -6810,9 +6742,6 @@ export class InteractiveMode {
 		try {
 			const systemPromptChange = await this.session.setModel(model);
 			this.footer.invalidate();
-			// A model switch ends any external-owner delegation episode.
-			this.externalOwnerCompactionNoticeShown = false;
-			this.footer?.setCompactionDelegated?.(false);
 			this.updateEditorBorderColor();
 			const systemPromptStr = systemPromptChange?.systemPromptName
 				? ` (optimized system prompt applied: ${systemPromptChange.systemPromptName})`
@@ -8050,12 +7979,6 @@ export class InteractiveMode {
 			this.resetExtensionUI();
 			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 			this.outputPad = this.settingsManager.getOutputPad();
-			// Reload replaces the session runner: a genuine ownership boundary, so the
-			// external-owner delegation episode ends here (settings-only rebuilds below
-			// go through rebuildChatFromMessages and must NOT reset it — post-#1188 core
-			// emits no repeat rejection event to restore cleared state).
-			this.externalOwnerCompactionNoticeShown = false;
-			this.footer?.setCompactionDelegated?.(false);
 			this.rebuildChatFromMessages();
 			time("chatRebuild", "reload");
 			chatRestoredBeforeSessionStart = true;
