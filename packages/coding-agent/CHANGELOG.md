@@ -16,7 +16,9 @@
 
 - Compacting immediately after switching sessions over RPC no longer fails with "Compaction cancelled" when the previous session's extensions were still binding their tools.
 
-- The RPC `session_replaced` event now carries the new session identity as `durableSessionId`. Multi-session hosts tag every record with a per-connection `sessionId`, which overwrote the identity the event exists to deliver, so attached clients could not resync after a replacement they did not initiate.
+- The RPC `session_replaced` event now carries the new session identity as `durableSessionId`. Multi-session hosts tag every record with a per-connection `sessionId`, which overwrote the identity the event exists to deliver, so attached clients could not resync after a replacement they did not initiate. The event is also emitted on classic connections (untagged), where `new_session`, `switch_session`, `fork`, `clone`, and `import_jsonl` previously announced a replacement to nobody, and it is now part of the typed `RpcClientEvent` union so clients can discriminate it without casting.
+
+- An interactive session sharing a host no longer keeps rendering the previous session after another attached client switches, forks, or replaces the shared session; the proxy rebinds its session manager, settings, and transcript when the host announces the replacement.
 
 - Shared-host RPC events are no longer stranded when a record is enqueued while the previous drain is settling. On lanes without a registered connection the retained queues were never rescheduled, so session events after the first flush were queued and never written.
 

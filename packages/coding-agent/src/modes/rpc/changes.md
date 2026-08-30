@@ -5,18 +5,20 @@
 ### What changed
 
 - `rpc-types.ts` / `connection-handler.ts`: `RpcSessionReplacedEvent` renames its identity field from `sessionId` to `durableSessionId`. Multi-session hosts tag every outbound record through `tagSessionRecord()`, which spreads `sessionId: routingSessionId` last, so the event's own identity was overwritten by the per-connection routing handle before it reached the wire.
+- `connection-handler.ts`: the emission is no longer gated on `routingSessionId !== undefined`, so classic connections receive the replacement event too - untagged, since `tagSessionRecord()` is a no-op without a routing handle. Classic `new_session`, `switch_session`, `fork`, `clone`, and `import_jsonl` previously emitted nothing at all despite the documented contract in `docs/rpc.md`.
+- `rpc-client.ts`: `RpcSessionReplacedEvent` joins the public `RpcClientEvent` union so a typed client can discriminate `event.type === "session_replaced"` and read `durableSessionId` without casting. `collectEvents()` excludes it, because it is connection-level rather than part of the agent event stream it returns.
 
 ### Why
 
-- The command response for a replacement reports only `{ cancelled }`, so `session_replaced` is the only push channel carrying the new identity. An attached client that did not issue the replacement was told its binding moved but received the routing handle it already knew, leaving it no way to resync without guessing.
+- The command response for a replacement reports only `{ cancelled }`, so `session_replaced` is the only push channel carrying the new identity. An attached client that did not issue the replacement was told its binding moved but received the routing handle it already knew, leaving it no way to resync without guessing. A classic client got no event whatsoever, and no client could type the event it did receive.
 
 ### Why an extension could not handle it
 
-- The routing tag is applied by the connection handler beneath every extension hook; no extension can observe or reorder it.
+- The routing tag is applied by the connection handler beneath every extension hook; no extension can observe or reorder it, and the client event union is protocol surface.
 
 ### Expected merge conflict zones
 
-- LOW: the `session_replaced` payload in `rebindSession()` and its wire type.
+- LOW: the `session_replaced` payload in `rebindSession()`, its wire type, and the client event union.
 
 
 ## 2026-08-30 - Settle a deferred rebind before compacting
