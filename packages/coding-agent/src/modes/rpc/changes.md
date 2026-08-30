@@ -1,5 +1,43 @@
 # changes
 
+## 2026-08-30 - Carry the session replacement identity under durableSessionId
+
+### What changed
+
+- `rpc-types.ts` / `connection-handler.ts`: `RpcSessionReplacedEvent` renames its identity field from `sessionId` to `durableSessionId`. Multi-session hosts tag every outbound record through `tagSessionRecord()`, which spreads `sessionId: routingSessionId` last, so the event's own identity was overwritten by the per-connection routing handle before it reached the wire.
+
+### Why
+
+- The command response for a replacement reports only `{ cancelled }`, so `session_replaced` is the only push channel carrying the new identity. An attached client that did not issue the replacement was told its binding moved but received the routing handle it already knew, leaving it no way to resync without guessing.
+
+### Why an extension could not handle it
+
+- The routing tag is applied by the connection handler beneath every extension hook; no extension can observe or reorder it.
+
+### Expected merge conflict zones
+
+- LOW: the `session_replaced` payload in `rebindSession()` and its wire type.
+
+
+## 2026-08-30 - Settle a deferred rebind before compacting
+
+### What changed
+
+- `connection-handler.ts`: the deferred rebind refresh started by `setRebindSession` is now retained in `pendingRebindRefresh`, and the `compact` command awaits it before calling `session.compact()`.
+
+### Why
+
+- A replacement acknowledges its command before extensions finish binding, by design: extensions may wait for session work the replacement still owns, so the derived-surface refresh runs out of band. Nothing tracked that detached promise, so it escaped the registry's lifecycle mutex. Extensions bind their tool activation during that window (`video-in` and `look-at` sync their tool against the new model's capabilities), and an active-tool change advances the context revision and aborts core compaction by design. A client issuing `compact` right after `switch_session` returned therefore raced the rebind and failed with "Compaction cancelled".
+
+### Why an extension could not handle it
+
+- The ordering between a command response and the out-of-band rebind is connection-handler scheduling; no extension hook observes the deferred refresh.
+
+### Expected merge conflict zones
+
+- LOW: the deferred branch of `rebindSession()` and the `compact` command case.
+
+
 ## 2026-08-30 - Reschedule the retained-queue drain when an enqueue races its settling
 
 ### What changed
