@@ -1,5 +1,24 @@
 # changes
 
+## 2026-08-30 - Reschedule the retained-queue drain when an enqueue races its settling
+
+### What changed
+
+- `session-event-writer.ts`: `flush()` clears `drainPromise` from a `.then` reaction, so an `enqueue()` landing between `drainUntilEmpty()` resolving and that reaction observed a stale in-flight drain. `requestFlush()` then returned early and scheduled nothing, stranding every subsequent record in its retained queue. The settle reaction now reschedules a flush while ready queues remain.
+
+### Why
+
+- On lanes with no registered connection the records go to the retained session queues rather than to a per-connection sink actor, so nothing else ever rescued them: `open_session` responses flushed, and the prompt events that followed were enqueued and never written. `SocketEventSinkActor.drain()` already carried the same guard; the queue lane did not.
+
+### Why an extension could not handle it
+
+- The drain scheduler is internal writer machinery beneath the RPC transport; no extension hook observes or drives it.
+
+### Expected merge conflict zones
+
+- LOW: the drain settle reaction in `flush()`.
+
+
 ## 2026-08-30 - Reschedule the sink actor drain when an enqueue races its settling
 
 - `socket-event-fanout.ts`: `SocketEventSinkActor.drain()` clears `draining` in a `.finally()` reaction. An `enqueue()` landing between the drain loop's exit and that reaction received the stale settled promise and started no new drain, leaving the record queued until the next unrelated enqueue rescued it — observed as targeted `open_session` responses reaching the client seconds late or not at all (`W-route` logged, `socket.write` never called). The `.finally()` now reschedules `drain()` when the queue is non-empty, so a racing record flushes immediately. Deterministic reproduction: `test/socket-event-fanout.test.ts`.

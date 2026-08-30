@@ -1,5 +1,24 @@
 # changes
 
+## 2026-08-30 - Drop the classic host-UI no-op stub
+
+### What changed
+
+- `packages/coding-agent/src/core/agent-session-runtime.ts` no longer carries a no-op `setHostUiHandler` stub. Host-driven extension UI is a shared-host capability, so the classic runtime does not implement it and interactive mode probes for it instead.
+
+### Why
+
+- The stub existed only to absorb an unconditional constructor call, which made a host-only concern part of the classic construction contract.
+
+### Why an extension could not handle it
+
+- The runtime construction contract is core wiring beneath the extension API.
+
+### Expected merge conflict zones
+
+- LOW: the method list around `setBeforeSessionInvalidate`.
+
+
 ## 2026-08-30 - Experimental workflow eval-only policy
 
 ### What changed
