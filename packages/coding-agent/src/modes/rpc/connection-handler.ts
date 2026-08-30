@@ -258,6 +258,17 @@ export function createRpcConnectionHandler(
 	let loadedSurfacesDigest: string | undefined;
 	let rpcCommandsDigest: string | undefined;
 	let suppressLoadedSurfaceEvents = false;
+	/**
+	 * In-flight deferred rebind refresh, if any.
+	 *
+	 * A replacement acknowledges its command before extensions finish binding (see
+	 * setRebindSession), so the extension rebind lands out of band. Extensions bind
+	 * their tool activation during that window, and an active-tool change advances
+	 * the context revision and aborts core compaction by design - which would kill a
+	 * compaction the client issued right after the switch returned. Commands that
+	 * cannot tolerate a half-bound surface await this first.
+	 */
+	let pendingRebindRefresh: Promise<void> | undefined;
 	const eventOutput = createRpcEventOutputBuffer(sink.writeRaw);
 
 	const tagSessionRecord = <T extends object>(value: T): T | (T & { sessionId: string }) =>
@@ -752,9 +763,13 @@ export function createRpcConnectionHandler(
 			});
 		};
 		if (deferRefresh) {
-			void refresh.then(installSessionSubscriptions, (cause) => {
+			const settled = refresh.then(installSessionSubscriptions, (cause) => {
 				outputEvent({ type: "rpc_error", error: String(cause) });
 			});
+			pendingRebindRefresh = settled.finally(() => {
+				if (pendingRebindRefresh === settled) pendingRebindRefresh = undefined;
+			});
+			void pendingRebindRefresh;
 			return;
 		}
 		await refresh;
@@ -1119,6 +1134,9 @@ export function createRpcConnectionHandler(
 			// =================================================================
 
 			case "compact": {
+				// Let a deferred rebind finish binding extensions first: its tool
+				// activation would otherwise land mid-compaction and abort it.
+				await pendingRebindRefresh;
 				const result = await session.compact(command.customInstructions);
 				return success(id, "compact", result);
 			}
