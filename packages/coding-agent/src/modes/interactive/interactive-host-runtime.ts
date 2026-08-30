@@ -243,7 +243,8 @@ interface RemoteSessionProxy {
 	createReplacedSessionContext(): ReplacedSessionContext;
 }
 
-function createRemoteSessionProxy(
+/** Exported for direct coverage of the wire-event handling below. */
+export function createRemoteSessionProxy(
 	local: AgentSession,
 	agentDir: string,
 	client: RpcClient,
@@ -351,6 +352,16 @@ function createRemoteSessionProxy(
 					(response) => response && client.sendExtensionUIResponse(response),
 				);
 			else pendingUiRequests.push(request);
+			return;
+		}
+		if (wireEvent.type === "session_replaced") {
+			// The host swapped the live session behind this connection - another
+			// attached client issued the replacement, or an extension drove one that no
+			// client issued. Nothing else re-reads the binding, so without this the
+			// proxy keeps serving the previous session's manager, settings and message
+			// mirror while the host has already moved on. The command response carries
+			// only `{ cancelled }`, so this event is the only signal available here.
+			void refresh().catch(reportActionFailure("session refresh after replacement"));
 			return;
 		}
 		if (wireEvent.type === "agent_settled") state = { ...state, isStreaming: false, retryAttempt: 0 };
@@ -476,7 +487,7 @@ function createRemoteSessionProxy(
 		const event = hydrateMessageUpdate(wireEvent, streamingAssistant);
 		for (const listener of listeners) listener(event);
 	});
-	const refresh = async (): Promise<void> => {
+	const performRefresh = async (): Promise<void> => {
 		const nextState = await client.getState();
 		state = { ...stateFromRpc(nextState) };
 		nextQueuedInputOrder = Math.max(0, ...nextState.ordered.map((item) => item.enqueueOrder));
@@ -504,6 +515,19 @@ function createRemoteSessionProxy(
 		}
 		local.agent.state.messages.splice(0, local.agent.state.messages.length, ...structuredClone(messages));
 		streamingAssistant = undefined;
+	};
+	// Refreshes must not interleave: each one reassigns sessionManager,
+	// settingsManager and the mirrored message list, so two in flight can commit a
+	// mixed snapshot of two different sessions. A replacement-driven refresh races
+	// exactly that way against a caller-driven one, so run them in order.
+	let refreshChain: Promise<void> = Promise.resolve();
+	const refresh = (): Promise<void> => {
+		const next = refreshChain.then(performRefresh, performRefresh);
+		refreshChain = next.then(
+			() => {},
+			() => {},
+		);
+		return next;
 	};
 	const session = new Proxy(local, {
 		get(target, property, receiver) {
