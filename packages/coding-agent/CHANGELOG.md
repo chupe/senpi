@@ -12,6 +12,12 @@
 
 ### Fixed
 
+- Compaction delegated to an external owner (the Claude Agent SDK) again renders as a single muted notice with the context meter marked as handled natively, instead of a red error on every auto-compaction attempt. The notice re-arms on a successful compaction, model switch, retry fallback, session rebind, reload, or transcript rerender.
+
+- Compacting immediately after switching sessions over RPC no longer fails with "Compaction cancelled" when the previous session's extensions were still binding their tools.
+
+- The RPC `session_replaced` event now carries the new session identity as `durableSessionId`. Multi-session hosts tag every record with a per-connection `sessionId`, which overwrote the identity the event exists to deliver, so attached clients could not resync after a replacement they did not initiate.
+
 - Shared-host RPC events are no longer stranded when a record is enqueued while the previous drain is settling. On lanes without a registered connection the retained queues were never rescheduled, so session events after the first flush were queued and never written.
 
 - Shared-host disposal continues through its cleanup sequence when the remote session does not provide a local bash abort, restoring the documented teardown contract for transport-loss paths.
