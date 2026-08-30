@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- A compaction started right after `switch_session`, `new_session`, or `fork` is no longer cancelled by the replacement's own extension binding. Binding deactivates tools for the active model, and that tool change aborted the in-flight compaction with "Compaction cancelled".
+
 - The `session_replaced` RPC event carries the replacement identity as `durableSessionId`. It previously used `sessionId`, which multi-session hosts overwrite with the connection's routing handle, so attached clients received a replacement event with no usable identity.
 
 - Shared-host RPC events are no longer stranded when a record is enqueued while the previous drain is settling. On lanes without a registered connection the retained queues were never rescheduled, so session events after the first flush were queued and never written.
