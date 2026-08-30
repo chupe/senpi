@@ -1,5 +1,25 @@
 # changes
 
+## 2026-08-30 - Keep shared-host disposal working when the remote session is incomplete
+
+### What changed
+
+- `interactive-host-runtime.ts`: `RemoteInteractiveRuntime.dispose()` invokes `abortLocalBash()` optionally. Disposal runs on paths where the transport is already gone and the remote session can be a partially constructed stand-in, so a missing method must not abort the teardown sequence.
+- `packages/coding-agent/src/modes/interactive/interactive-mode.ts` treats host-driven extension UI as the optional shared-host capability it is: the constructor calls `setHostUiHandler` only when the runtime provides it, and the request type is declared locally instead of cast through `any`.
+
+### Why
+
+- `dispose()` exists to continue through `closeSession`, `stop`, and the local dispose even when the transport failed. Calling the abort unconditionally made a missing method the thrown error and defeated that contract.
+
+### Why an extension could not handle it
+
+- The disposal sequence belongs to the shared-host runtime wrapper, which no extension surface can intercept.
+
+### Expected merge conflict zones
+
+- LOW: the cleanup list in `dispose()`.
+
+
 ## 2026-08-30 - Forward shared-host switch cwd overrides
 
 - `interactive-host-runtime.ts` forwards the `cwdOverride` field explicitly when the interactive proxy requests a shared-host session replacement, preserving the host-effective cwd through the RPC boundary and subsequent proxy refresh.

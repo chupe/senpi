@@ -148,7 +148,10 @@ export class RemoteInteractiveRuntime {
 	async dispose(): Promise<void> {
 		const errors: unknown[] = [];
 		for (const cleanup of [
-			() => this.#remoteSession.abortLocalBash(),
+			// Teardown runs on paths where the transport is already gone and the
+			// remote session may be a partially constructed stand-in, so the local
+			// bash abort is opt-in rather than a hard requirement of disposal.
+			() => this.#remoteSession.abortLocalBash?.(),
 			() => this.#client.closeSession(),
 			() => this.#client.stop(),
 			() => this.#local.dispose(),

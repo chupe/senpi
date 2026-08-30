@@ -163,6 +163,17 @@ function hostFixture() {
 				sessionFile: options.sessionManager.getSessionFile(),
 				sessionId: options.sessionManager.getSessionId(),
 				sessionName: undefined,
+				// The shared state builder resolves the project-trust decision from the
+				// session's own agent directory, so a router fixture must expose it too.
+				agentDir: options.agentDir,
+				// Remaining fields the shared state builder reads when it projects
+				// `open_session`; the router fixture answers them with inert values.
+				thinkingSelection: undefined,
+				retryAttempt: undefined,
+				isBashRunning: false,
+				favoriteModels: [],
+				scopedModels: [],
+				getContextUsage: () => undefined,
 				autoCompactionEnabled: false,
 				messages: [],
 				pendingMessageCount: 0,

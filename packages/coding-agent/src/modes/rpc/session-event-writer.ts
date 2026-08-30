@@ -228,6 +228,11 @@ export class SessionEventWriter {
 		void drain.then(
 			() => {
 				if (this.drainPromise === drain) this.drainPromise = undefined;
+				// An enqueue landing between drainUntilEmpty() finishing and this
+				// reaction sees the stale settled promise, so requestFlush() returns
+				// early and schedules nothing. Reschedule for it here, mirroring the
+				// same guard in SocketEventSinkActor.drain().
+				if (this.readyQueues.length > 0) this.requestFlush();
 			},
 			(cause) => {
 				if (this.drainPromise === drain) this.drainPromise = undefined;

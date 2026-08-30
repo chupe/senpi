@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- Shared-host RPC events are no longer stranded when a record is enqueued while the previous drain is settling. On lanes without a registered connection the retained queues were never rescheduled, so session events after the first flush were queued and never written.
+
+- Shared-host disposal continues through its cleanup sequence when the remote session does not provide a local bash abort, restoring the documented teardown contract for transport-loss paths.
+
 - Bash callback settlement is bounded on direct, shared-host, and harness execution paths so never-settling callbacks cannot hang commands or silently lose spill cleanup failures.
 
 - Deterministic compaction fallback now supports replay-safe Gemini opaque provider state (thoughtSignature, thinkingSignature, textSignature, and empty visible text blocks) and recovers earlier safe boundaries without breaking atomic tool-call chains ([#947](https://github.com/code-yeongyu/senpi/pull/947)).
