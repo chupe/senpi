@@ -659,19 +659,24 @@ export function createRpcConnectionHandler(
 		session = runtimeHost.session;
 		if (replacedSession) {
 			lastAbortSource = undefined;
-			if (routingSessionId !== undefined) {
-				// A replacement can be driven by ANY attached client, so every connection must be
-				// told the live binding moved and given the new authoritative identity. Emitted
-				// before the derived-surface refresh so a client cannot act on the old identity in
-				// the window the refresh takes.
-				outputEvent({
-					type: "session_replaced",
-					durableSessionId: session.sessionId,
-					sessionFile: session.sessionFile,
-					cwd: session.sessionManager.getCwd(),
-					sessionName: session.sessionName,
-				} satisfies RpcSessionReplacedEvent);
-			}
+			// A replacement can be driven by ANY attached client - or by an extension, so
+			// no client issued it at all - and the command response reports only
+			// `{ cancelled }`. This event is therefore the only channel carrying the new
+			// authoritative identity, on classic connections just as much as on
+			// multi-session ones. Emitted before the derived-surface refresh so a client
+			// cannot act on the old identity in the window that refresh takes.
+			//
+			// Classic emits it untagged: tagSessionRecord() is a no-op without a routing
+			// handle, and the identity rides `durableSessionId` precisely so the two keys
+			// never collide. The event is additive, so a client that does not know the
+			// type filters it out.
+			outputEvent({
+				type: "session_replaced",
+				durableSessionId: session.sessionId,
+				sessionFile: session.sessionFile,
+				cwd: session.sessionManager.getCwd(),
+				sessionName: session.sessionName,
+			} satisfies RpcSessionReplacedEvent);
 		}
 		unsubscribeExtensionEvents = clientCapabilities?.includes(EXTENSION_EVENTS_CAPABILITY)
 			? session.extensionRunner.onRpcEvent(({ name, data }) => {

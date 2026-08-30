@@ -163,6 +163,35 @@ describe("RPC wire provenance", () => {
 		await handler.dispose();
 	});
 
+	it("broadcasts the replacement identity untagged on a classic connection", async () => {
+		const first = await newHarness();
+		const second = await newHarness();
+		const collected = makeSink();
+		const host = makeRuntimeHost(first.session);
+		// No `sessionId`: this is the classic single-connection lane that runRpcMode()
+		// builds. docs/rpc.md documents the same replacement contract here, emitted
+		// untagged, because the response to new_session/switch_session/fork reports
+		// only `{ cancelled }` and an extension can drive a replacement the client
+		// never issued - so this event is still the only channel carrying the new
+		// identity.
+		const handler = createRpcConnectionHandler(host.runtimeHost, collected.sink);
+		await handler.ready;
+
+		const replaced = collected.waitFor((record) => record.type === "session_replaced");
+		await host.replaceWith(second.session);
+
+		const record = await replaced;
+		expect(record).toMatchObject({
+			type: "session_replaced",
+			durableSessionId: second.session.sessionId,
+			cwd: second.session.sessionManager.getCwd(),
+		});
+		// Untagged: classic has no per-connection routing handle to apply.
+		expect(record).not.toHaveProperty("sessionId");
+
+		await handler.dispose();
+	});
+
 	// Finding 4 -----------------------------------------------------------------
 	it("carries user abort provenance across the RPC boundary in state and the abort event", async () => {
 		const harness = await newHarness();
